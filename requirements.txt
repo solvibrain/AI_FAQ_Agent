@@ -5,3 +5,4 @@ gradio
 python-dotenv
 pandas
 sentence-transformers
+langchain-google-genai

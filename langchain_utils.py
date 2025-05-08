@@ -5,6 +5,14 @@ from langchain_core.documents import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough, RunnableParallel
+from langchain_core.output_parsers import StrOutputParser
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 def load_faqs_from_csv(csv_file_path: str) -> list[Document]:
     """
@@ -113,3 +121,73 @@ def perform_similarity_search(vector_store: Chroma, query: str, k: int = 3) -> l
     except Exception as e:
         print(f"Error during similarity search: {e}")
         return []
+
+def get_google_generativeai_llm(model_name: str = "gemini-2.0-flash", 
+                                temperature: float = 0.0,
+                                top_p: float = 0.85) -> ChatGoogleGenerativeAI | None:
+    """
+    Initializes and returns a Google Generative AI LLM.
+    Requires GOOGLE_API_KEY to be set in the environment.
+    """
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        print("Error: GOOGLE_API_KEY not found in environment variables. ")
+        print("Please ensure it's set in your .env file and load_dotenv() has been called.")
+        return None
+    try:
+        llm = ChatGoogleGenerativeAI(
+            model=model_name,
+            google_api_key=api_key,
+            temperature=temperature,
+            top_p=top_p,
+            # convert_system_message_to_human=True # Depending on model and use case
+        )
+        print(f"Successfully initialized Google Gemini LLM: {model_name}")
+        return llm
+    except Exception as e:
+        print(f"Error initializing Google Gemini LLM: {e}")
+        return None
+
+def create_rag_chain(retriever, llm: ChatGoogleGenerativeAI, prompt_template_str: str) -> RunnableParallel | None:
+    """
+    Creates a Retrieval Augmented Generation (RAG) chain using LCEL.
+
+    Args:
+        retriever: The retriever object from the vector store.
+        llm: The initialized language model.
+        prompt_template_str: The string for the prompt template.
+
+    Returns:
+        A Langchain Runnable chain or None if an error occurs.
+    """
+    if not retriever or not llm:
+        print("Error: Retriever or LLM not provided for RAG chain creation.")
+        return None
+    
+    try:
+        prompt = ChatPromptTemplate.from_template(prompt_template_str)
+
+        # Define the RAG chain using LCEL
+        # 1. Retrieve context based on the question
+        # 2. Pass the context and question to the prompt
+        # 3. Pass the formatted prompt to the LLM
+        # 4. Parse the LLM output
+        rag_chain = (
+            RunnablePassthrough.assign(context=(lambda x: x["question"]) | retriever)
+            .assign(answer=prompt | llm | StrOutputParser())
+        )
+        # The above chain structure returns a dict with 'question', 'context', and 'answer'.
+        # If you only want the answer, you can refine it further:
+        # rag_chain = (
+        #     {"context": retriever, "question": RunnablePassthrough()}
+        #     | prompt
+        #     | llm
+        #     | StrOutputParser()
+        # )
+        # For this implementation, returning the dict is more informative for testing.
+
+        print("RAG chain created successfully.")
+        return rag_chain
+    except Exception as e:
+        print(f"Error creating RAG chain: {e}")
+        return None
