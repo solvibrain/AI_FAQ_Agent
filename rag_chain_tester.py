@@ -20,7 +20,7 @@ VECTOR_STORE_PERSIST_DIR = "chroma_db_faq"
 SIMILARITY_SEARCH_K = 3 
 
 def main():
-    print("--- Starting RAG Chain Tester ---")
+    print("--- Starting RAG Chain Tester ---", flush=True)
     load_dotenv()
 
     vector_store = process_faqs_and_setup_vector_store(
@@ -28,20 +28,20 @@ def main():
         persist_directory=VECTOR_STORE_PERSIST_DIR
     )
     if not vector_store:
-        print("Failed to setup vector store. Exiting.")
+        print("Failed to setup vector store. Exiting.", flush=True)
         return
 
     retriever = vector_store.as_retriever(search_kwargs={"k": SIMILARITY_SEARCH_K})
-    print(f"Retriever created with k={SIMILARITY_SEARCH_K}")
+    print(f"Retriever created with k={SIMILARITY_SEARCH_K}", flush=True)
 
     llm = get_google_generativeai_llm()
     if not llm:
-        print("Failed to initialize LLM. Exiting.")
+        print("Failed to initialize LLM. Exiting.", flush=True)
         return
 
     rag_chain = create_rag_chain(retriever=retriever, llm=llm)
     if not rag_chain:
-        print("Failed to create RAG chain. Exiting.")
+        print("Failed to create RAG chain. Exiting.", flush=True)
         return
 
     test_questions = [
@@ -58,62 +58,53 @@ def main():
     ]
 
     for i, question in enumerate(test_questions):
-        print(f"\n--- Test {i+1}: Querying RAG chain with: '{question}' ---")
+        print(f"\n--- Test {i+1}: Querying RAG chain with: '{question}' ---", flush=True)
         
         try:
-            # rag_chain.invoke(question) returns a dictionary like: 
-            # {'question': '...', 'context': [...], 
-            #  'answer': FAQResponse(human_handoff_needed=..., is_in_scope=..., answer_content=...) }
-            # The 'answer' key now contains an instance of our FAQResponse Pydantic model.
             chain_output = rag_chain.invoke(question)
             
             if 'answer' not in chain_output:
-                print(f"  Error: 'answer' key missing in RAG chain output.")
-                print(f"  Raw RAG chain output: {chain_output}")
+                print(f"  Error: 'answer' key missing in RAG chain output.", flush=True)
+                print(f"  Raw RAG chain output: {chain_output}", flush=True)
                 continue
 
-            # The 'answer' should be our FAQResponse object (or a dict that Pydantic parsed into)
             llm_response_data = chain_output['answer']
-            print(f"  Raw LLM Pydantic Object (from chain's 'answer' key):\n  {llm_response_data}")
+            print(f"  Raw LLM Pydantic Object (from chain's 'answer' key):\n  {llm_response_data}", flush=True)
 
-            # Check if it's an instance of our Pydantic model or a dict
             if isinstance(llm_response_data, FAQResponse):
                 human_handoff_needed = llm_response_data.human_handoff_needed
                 answer_content = llm_response_data.answer_content
-            elif isinstance(llm_response_data, dict): # If it's a dict, access keys
+            elif isinstance(llm_response_data, dict):
                 human_handoff_needed = llm_response_data.get("human_handoff_needed", False)
                 answer_content = llm_response_data.get("answer_content", "Error: 'answer_content' not found.")
             else:
-                print(f"  Error: Unexpected type for 'answer' in RAG chain output: {type(llm_response_data)}")
-                print(f"  Content: {llm_response_data}")
-                # Attempt to print a string representation if it's not a model or dict
-                # This might happen if the Pydantic parser fails and the LLM returns a string despite instructions.
-                # In this case, it's likely an unparsable string, but we print it for debug.
+                print(f"  Error: Unexpected type for 'answer' in RAG chain output: {type(llm_response_data)}", flush=True)
+                print(f"  Content: {llm_response_data}", flush=True)
                 try:
                     raw_llm_string_output = str(llm_response_data)
-                    print(f"  Attempting to decode as a fallback JSON string: {raw_llm_string_output}")
-                    fallback_data = json.loads(raw_llm_string_output) # Try to parse as JSON as a last resort
+                    print(f"  Attempting to decode as a fallback JSON string: {raw_llm_string_output}", flush=True)
+                    fallback_data = json.loads(raw_llm_string_output)
                     human_handoff_needed = fallback_data.get("human_handoff_needed", False)
                     answer_content = fallback_data.get("answer_content", "Error: Fallback JSON parsing failed to find content.")
                 except Exception as fallback_e:
-                    print(f"  Error: Fallback JSON parsing also failed: {fallback_e}. Output was not the expected Pydantic model or parsable JSON.")
-                    print("  Problematic output: " + str(llm_response_data))
+                    print(f"  Error: Fallback JSON parsing also failed: {fallback_e}. Output was not the expected Pydantic model or parsable JSON.", flush=True)
+                    print(f"  Problematic output: {llm_response_data}", flush=True)
                     continue
 
-            print("\n  Interpreted LLM Output:")
+            print("\n  Interpreted LLM Output:", flush=True)
 
             if human_handoff_needed:
-                print(f"  Escalation Triggered: {ESCALATION_MESSAGE}")
+                print(f"  Escalation Triggered: {ESCALATION_MESSAGE}", flush=True)
             else:
-                print(f"  Answer: {answer_content}")
+                print(f"  Answer: {answer_content}", flush=True)
 
         except Exception as e:
-            print(f"  An unexpected error occurred while processing the question '{question}': {e}")
+            print(f"  An unexpected error occurred while processing the question '{question}': {e}", flush=True)
             import traceback
-            print(traceback.format_exc()) 
-        time.sleep(0.1) # Add a small delay
+            print(traceback.format_exc(), flush=True) 
+        time.sleep(0.1)
 
-    print("\n--- RAG Chain Tester Finished ---")
+    print("\n--- RAG Chain Tester Finished ---", flush=True)
 
 if __name__ == "__main__":
     main()
