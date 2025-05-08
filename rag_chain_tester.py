@@ -1,69 +1,117 @@
 # rag_chain_tester.py
 import os
+import json # Keep for potential direct LLM string debugging if needed, but not for main flow
+import time # Import time module
 from dotenv import load_dotenv
 
-from utils import process_faqs_and_setup_vector_store
+from utils import (
+    process_faqs_and_setup_vector_store, 
+    ESCALATION_MESSAGE
+)
 from langchain_utils import (
-    get_google_generativeai_llm,
+    get_google_generativeai_llm, 
     create_rag_chain,
-    perform_similarity_search # Though RAG chain handles retrieval, direct search can be useful for context inspection
+    FAQResponse # Import the Pydantic model for type checking if desired
 )
 
-# Load environment variables from .env file (especially GOOGLE_API_KEY)
-load_dotenv()
-
-PROMPT_TEMPLATE = """You are a helpful FAQ assistant. Answer the user's question based ONLY on the following context. \nIf the context doesn't contain the answer, say you don't know. Be friendly and professional.\n\nContext: \n{context}\n\nQuestion: {question}\n\nAnswer:"""
+# --- Configuration ---
+FAQ_DATA_PATH = "faq_data.csv"
+VECTOR_STORE_PERSIST_DIR = "chroma_db_faq"
+SIMILARITY_SEARCH_K = 3 
 
 def main():
     print("--- Starting RAG Chain Tester ---")
+    load_dotenv()
 
-    # 1. Process FAQs and set up the vector store
-    vector_store = process_faqs_and_setup_vector_store()
+    vector_store = process_faqs_and_setup_vector_store(
+        csv_file_path=FAQ_DATA_PATH,
+        persist_directory=VECTOR_STORE_PERSIST_DIR
+    )
     if not vector_store:
-        print("Failed to initialize vector store. Exiting.")
+        print("Failed to setup vector store. Exiting.")
         return
 
-    # 2. Create a retriever from the vector store
-    retriever = vector_store.as_retriever(search_kwargs={'k': 3}) # Retrieve top 3 docs
-    print("Retriever created from vector store.")
+    retriever = vector_store.as_retriever(search_kwargs={"k": SIMILARITY_SEARCH_K})
+    print(f"Retriever created with k={SIMILARITY_SEARCH_K}")
 
-    # 3. Initialize the LLM
     llm = get_google_generativeai_llm()
     if not llm:
         print("Failed to initialize LLM. Exiting.")
         return
 
-    # 4. Create the RAG chain
-    rag_chain = create_rag_chain(retriever, llm, PROMPT_TEMPLATE)
+    rag_chain = create_rag_chain(retriever=retriever, llm=llm)
     if not rag_chain:
         print("Failed to create RAG chain. Exiting.")
         return
 
-    print("\n--- Testing RAG Chain with Sample Questions ---")
     test_questions = [
         "What are your business hours?",
         "How can I reset my password?",
-        "What payment methods do you accept?",
-        "Where is your office located?",
-        "How do I contact customer support?",
-        "What is the return policy?" # This question is likely not in FAQs
+        "I want to speak to a human agent immediately!",
+        "This is unacceptable, I demand to talk to your manager!",
+        "What is the meaning of life?",
+        "Tell me about your refund policy.",
+        "My account is locked and I'm really angry!",
+        "Can you explain quantum physics?",
+        "I need help with a very sensitive legal matter regarding my account.",
+        "Thanks, that was helpful!"
     ]
 
-    for question in test_questions:
-        print(f"\nProcessing question: '{question}'")
+    for i, question in enumerate(test_questions):
+        print(f"\n--- Test {i+1}: Querying RAG chain with: '{question}' ---")
+        
         try:
-            # Invoke the RAG chain
-            # The input to the chain is a dictionary with the key "question"
-            result = rag_chain.invoke({"question": question})
+            # rag_chain.invoke(question) returns a dictionary like: 
+            # {'question': '...', 'context': [...], 
+            #  'answer': FAQResponse(human_handoff_needed=..., is_in_scope=..., answer_content=...) }
+            # The 'answer' key now contains an instance of our FAQResponse Pydantic model.
+            chain_output = rag_chain.invoke(question)
             
-            print(f"  Question: {result.get('question')}")
-            print(f"  Retrieved Context Snippets (first 100 chars each):")
-            for i, doc in enumerate(result.get('context', [])):
-                print(f"    Doc {i+1}: {doc.page_content[:100]}...")
-            print(f"  LLM Answer: {result.get('answer')}")
-            
+            if 'answer' not in chain_output:
+                print(f"  Error: 'answer' key missing in RAG chain output.")
+                print(f"  Raw RAG chain output: {chain_output}")
+                continue
+
+            # The 'answer' should be our FAQResponse object (or a dict that Pydantic parsed into)
+            llm_response_data = chain_output['answer']
+            print(f"  Raw LLM Pydantic Object (from chain's 'answer' key):\n  {llm_response_data}")
+
+            # Check if it's an instance of our Pydantic model or a dict
+            if isinstance(llm_response_data, FAQResponse):
+                human_handoff_needed = llm_response_data.human_handoff_needed
+                answer_content = llm_response_data.answer_content
+            elif isinstance(llm_response_data, dict): # If it's a dict, access keys
+                human_handoff_needed = llm_response_data.get("human_handoff_needed", False)
+                answer_content = llm_response_data.get("answer_content", "Error: 'answer_content' not found.")
+            else:
+                print(f"  Error: Unexpected type for 'answer' in RAG chain output: {type(llm_response_data)}")
+                print(f"  Content: {llm_response_data}")
+                # Attempt to print a string representation if it's not a model or dict
+                # This might happen if the Pydantic parser fails and the LLM returns a string despite instructions.
+                # In this case, it's likely an unparsable string, but we print it for debug.
+                try:
+                    raw_llm_string_output = str(llm_response_data)
+                    print(f"  Attempting to decode as a fallback JSON string: {raw_llm_string_output}")
+                    fallback_data = json.loads(raw_llm_string_output) # Try to parse as JSON as a last resort
+                    human_handoff_needed = fallback_data.get("human_handoff_needed", False)
+                    answer_content = fallback_data.get("answer_content", "Error: Fallback JSON parsing failed to find content.")
+                except Exception as fallback_e:
+                    print(f"  Error: Fallback JSON parsing also failed: {fallback_e}. Output was not the expected Pydantic model or parsable JSON.")
+                    print("  Problematic output: " + str(llm_response_data))
+                    continue
+
+            print("\n  Interpreted LLM Output:")
+
+            if human_handoff_needed:
+                print(f"  Escalation Triggered: {ESCALATION_MESSAGE}")
+            else:
+                print(f"  Answer: {answer_content}")
+
         except Exception as e:
-            print(f"  Error invoking RAG chain for question '{question}': {e}")
+            print(f"  An unexpected error occurred while processing the question '{question}': {e}")
+            import traceback
+            print(traceback.format_exc()) 
+        time.sleep(0.1) # Add a small delay
 
     print("\n--- RAG Chain Tester Finished ---")
 

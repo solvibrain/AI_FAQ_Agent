@@ -7,10 +7,18 @@ from langchain_utils import (
     load_faqs_from_csv,
     get_text_splitter,
     get_huggingface_embeddings,
-    create_chroma_vector_store,
+    create_chroma_vector_store
 )
 
 FAQ_DATA_PATH = "faq_data.csv"
+
+# --- Component 3: Complexity Detection & Escalation Logic (LLM-driven approach) ---
+
+# Static keyword-based escalation logic has been removed in favor of an LLM-based approach.
+
+ESCALATION_MESSAGE = "I understand. This query seems to require more specialized assistance. I'll escalate this to a human agent who can help you further."
+
+# --- End of Component 3 --- 
 
 def process_faqs_and_setup_vector_store(csv_file_path: str = FAQ_DATA_PATH,
                                         chunk_size: int = 500,
@@ -66,7 +74,7 @@ if __name__ == '__main__':
     if db:
         print("Successfully created vector store from utils.py example.")
         # You could add a sample query here if needed for direct testing of utils.py
-        # from langchain_utils import perform_similarity_search
+        # from langchain_utils import perform_similarity_search # This import is for the test block only
         # test_query = "business hours"
         # results = perform_similarity_search(db, test_query)
         # if results:

@@ -8,11 +8,33 @@ from langchain_community.vectorstores import Chroma
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import PydanticOutputParser
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+# --- Pydantic Model for Structured Output ---
+class FAQResponse(BaseModel):
+    human_handoff_needed: bool = Field(description="Set to true if the user explicitly asks for a human, expresses significant frustration, makes a formal complaint, or if their query is highly sensitive and clearly beyond standard FAQ resolution. Otherwise, set to false.")
+    is_in_scope: bool = Field(description="Set to true if the retrieved context contains sufficient information to directly answer the user's question. Otherwise, set to false.")
+    answer_content: str = Field(description="If is_in_scope is true AND human_handoff_needed is false, provide a direct, concise, friendly, and professional answer based ONLY on the retrieved context. If is_in_scope is false AND human_handoff_needed is false, politely state that the information isn't available in the FAQs and you cannot answer it. If human_handoff_needed is true, provide a brief, polite acknowledgment (e.g., 'I understand you need further assistance.').")
+
+# --- Constants for Prompts ---
+# The prompt will now incorporate format instructions from the Pydantic parser
+DEFAULT_RAG_PROMPT_TEMPLATE = """You are an advanced FAQ assistant.
+Based on the user's question and the retrieved context, determine the values for the fields described in the format instructions below.
+
+User's question: {question}
+Retrieved context: {context}
+
+{format_instructions}
+
+Answer the question by providing ONLY the structured data as specified.
+"""
+
+# --- Function Definitions ---
 
 def load_faqs_from_csv(csv_file_path: str) -> list[Document]:
     """
@@ -139,8 +161,7 @@ def get_google_generativeai_llm(model_name: str = "gemini-2.0-flash",
             model=model_name,
             google_api_key=api_key,
             temperature=temperature,
-            top_p=top_p,
-            # convert_system_message_to_human=True # Depending on model and use case
+            top_p=top_p
         )
         print(f"Successfully initialized Google Gemini LLM: {model_name}")
         return llm
@@ -148,46 +169,42 @@ def get_google_generativeai_llm(model_name: str = "gemini-2.0-flash",
         print(f"Error initializing Google Gemini LLM: {e}")
         return None
 
-def create_rag_chain(retriever, llm: ChatGoogleGenerativeAI, prompt_template_str: str) -> RunnableParallel | None:
+def create_rag_chain(retriever, llm: ChatGoogleGenerativeAI, prompt_template_str: str = DEFAULT_RAG_PROMPT_TEMPLATE):
     """
-    Creates a Retrieval Augmented Generation (RAG) chain using LCEL.
-
+    Creates a RAG chain using Langchain Expression Language (LCEL).
+    This version uses PydanticOutputParser for structured JSON output.
     Args:
-        retriever: The retriever object from the vector store.
-        llm: The initialized language model.
+        retriever: The retriever object (e.g., from a vector store).
+        llm: The language model to use.
         prompt_template_str: The string for the prompt template.
-
     Returns:
-        A Langchain Runnable chain or None if an error occurs.
+        A runnable RAG chain that outputs a parsed Pydantic object, or None if an error occurs.
     """
-    if not retriever or not llm:
-        print("Error: Retriever or LLM not provided for RAG chain creation.")
-        return None
-    
     try:
-        prompt = ChatPromptTemplate.from_template(prompt_template_str)
+        # Instantiate the Pydantic parser
+        parser = PydanticOutputParser(pydantic_object=FAQResponse)
 
-        # Define the RAG chain using LCEL
-        # 1. Retrieve context based on the question
-        # 2. Pass the context and question to the prompt
-        # 3. Pass the formatted prompt to the LLM
-        # 4. Parse the LLM output
-        rag_chain = (
-            RunnablePassthrough.assign(context=(lambda x: x["question"]) | retriever)
-            .assign(answer=prompt | llm | StrOutputParser())
+        prompt = ChatPromptTemplate.from_template(
+            template=prompt_template_str,
+            partial_variables={"format_instructions": parser.get_format_instructions()}
         )
-        # The above chain structure returns a dict with 'question', 'context', and 'answer'.
-        # If you only want the answer, you can refine it further:
-        # rag_chain = (
-        #     {"context": retriever, "question": RunnablePassthrough()}
-        #     | prompt
-        #     | llm
-        #     | StrOutputParser()
-        # )
-        # For this implementation, returning the dict is more informative for testing.
 
-        print("RAG chain created successfully.")
+        def format_docs(docs):
+            return "\n\n".join(doc.page_content for doc in docs)
+
+        rag_chain_from_docs = (
+            RunnablePassthrough.assign(context=(lambda x: format_docs(x["context"])))
+            | prompt
+            | llm
+            | parser # Add the parser to the end of the chain
+        )
+
+        rag_chain = RunnableParallel(
+            {"context": retriever, "question": RunnablePassthrough()} 
+        ).assign(answer=rag_chain_from_docs)
+        
+        print("RAG chain with PydanticOutputParser created successfully.")
         return rag_chain
     except Exception as e:
-        print(f"Error creating RAG chain: {e}")
+        print(f"Error creating RAG chain with PydanticOutputParser: {e}")
         return None
