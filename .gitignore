@@ -1,6 +1,7 @@
 # Environment variables
 .env
 
+
 # Virtual environment
 venv/
 .venv/
@@ -65,3 +66,9 @@ Thumbs.db
 # .vscode/
 # *.sublime-workspace
 # *.sublime-project
+.windsurf/
+.windsurfrules
+
+# Gradio
+.gradio/
+.gradio/certificate.pem

@@ -68,12 +68,12 @@ def process_faqs_and_setup_vector_store(csv_file_path: str = FAQ_DATA_PATH,
     return vector_store
 
 if __name__ == '__main__':
-    # Example usage: This will typically be called from your main application script
+    # Example usage: This will typically be called from main application script to Test utils.py
     print("Running utils.py directly for demonstration...")
     db = process_faqs_and_setup_vector_store()
     if db:
         print("Successfully created vector store from utils.py example.")
-        # You could add a sample query here if needed for direct testing of utils.py
+        # We could add a sample query here if needed for direct testing of utils.py
         # from langchain_utils import perform_similarity_search # This import is for the test block only
         # test_query = "business hours"
         # results = perform_similarity_search(db, test_query)
