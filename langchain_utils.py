@@ -1,16 +1,18 @@
 # langchain_utils.py
 import os
 import pandas as pd
+import json 
 from langchain_core.documents import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough, RunnableParallel
+from langchain_core.runnables import RunnablePassthrough, RunnableParallel, RunnableLambda, RunnableConfig
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from operator import itemgetter
 
 # Load environment variables from .env file
 load_dotenv()
@@ -18,20 +20,29 @@ load_dotenv()
 # --- Pydantic Model for Structured Output ---
 class FAQResponse(BaseModel):
     human_handoff_needed: bool = Field(description="Set to true if the user explicitly asks for a human, expresses significant frustration, makes a formal complaint, or if their query is highly sensitive and clearly beyond standard FAQ resolution. Otherwise, set to false.")
-    is_in_scope: bool = Field(description="Set to true if the retrieved context contains sufficient information to directly answer the user's question. Otherwise, set to false.")
-    answer_content: str = Field(description="If is_in_scope is true AND human_handoff_needed is false, provide a direct, concise, friendly, and professional answer based ONLY on the retrieved context. If is_in_scope is false AND human_handoff_needed is false, politely state that the information isn't available in the FAQs and you cannot answer it. If human_handoff_needed is true, provide a brief, polite acknowledgment (e.g., 'I understand you need further assistance.').")
+    is_in_scope: bool = Field(description="Set to true if the retrieved context contains sufficient information to DIRECTLY and ADEQUATELY answer the user's question. Otherwise, set to false.")
+    answer_content: str = Field(description="Behavior depends on other fields. If human_handoff_needed is true, provide a polite handoff. If is_in_scope is true (and no handoff), answer from context. If is_in_scope is false (and no handoff): for simple conversational phrases, give a natural reply (e.g., 'You're welcome!'); for genuine but out-of-scope queries, state information is not in FAQs.")
 
 # --- Constants for Prompts ---
 # The prompt will now incorporate format instructions from the Pydantic parser
-DEFAULT_RAG_PROMPT_TEMPLATE = """You are an advanced FAQ assistant.
-Based on the user's question and the retrieved context, determine the values for the fields described in the format instructions below.
+DEFAULT_RAG_PROMPT_TEMPLATE = """You are an advanced FAQ assistant for an e-commerce store. Your primary goal is to answer customer questions based STRICTLY on the provided FAQ context.
 
 User's question: {question}
 Retrieved context: {context}
 
 {format_instructions}
 
-Answer the question by providing ONLY the structured data as specified.
+Follow these rules carefully when determining the fields:
+1.  **is_in_scope**: Set to `true` ONLY if the retrieved context DIRECTLY and ADEQUATELY answers the user's question. Otherwise, set to `false`.
+2.  **human_handoff_needed**: Set to `true` if the user explicitly asks for a human, expresses significant frustration, makes a formal complaint, or if their query is highly sensitive and clearly beyond standard FAQ resolution (e.g., complex legal issues, security breaches not covered by FAQs). Otherwise, set to `false`.
+3.  **answer_content**:
+    *   If `human_handoff_needed` is `true`, `answer_content` should be a polite handoff message (e.g., 'I understand you need further assistance. I'll connect you with a team member.').
+    *   Else if `is_in_scope` is `true`, `answer_content` should be the answer derived ONLY from the retrieved context. Be direct, concise, friendly, and professional.
+    *   Else (`is_in_scope` is `false` and `human_handoff_needed` is `false`):
+        *   If the user's question is a simple conversational phrase (e.g., 'thank you', 'hello', 'okay', 'bye') and not a request for specific information, `answer_content` should be a polite, brief, and natural conversational reply (e.g., 'You're welcome!', 'Hello! How can I help you with our FAQs today?', 'Okay!', 'Goodbye!'). For these, `is_in_scope` should still be `false` as they are not FAQ-based.
+        *   Otherwise (the user's question is a genuine query for information but not covered by the context), `answer_content` should politely state that the information isn't available in the FAQs (e.g., 'I can only answer questions based on our FAQs, and I don't have information on that topic.').
+
+Provide ONLY the structured data as specified by the format instructions.
 """
 
 # --- Function Definitions ---
@@ -192,16 +203,37 @@ def create_rag_chain(retriever, llm: ChatGoogleGenerativeAI, prompt_template_str
         def format_docs(docs):
             return "\n\n".join(doc.page_content for doc in docs)
 
+        def ensure_llm_output_is_string_for_parser(message_or_dict):
+            """Ensures the content fed to Pydantic parser is a string."""
+            if hasattr(message_or_dict, 'content'): # AIMessage
+                content = message_or_dict.content
+                if isinstance(content, dict):
+                    # Convert dict from LLM (if pre-parsed) back to JSON string
+                    return json.dumps(content) 
+                return content # Already a string or other, pass as is
+            elif isinstance(message_or_dict, dict):
+                return json.dumps(message_or_dict) # Should not happen if LLM outputs AIMessage
+            return str(message_or_dict) # Fallback to string conversion
+
         rag_chain_from_docs = (
             RunnablePassthrough.assign(context=(lambda x: format_docs(x["context"])))
             | prompt
             | llm
-            | parser # Add the parser to the end of the chain
+            | RunnableLambda(ensure_llm_output_is_string_for_parser) 
+            | parser 
         )
 
-        rag_chain = RunnableParallel(
-            {"context": retriever, "question": RunnablePassthrough()} 
-        ).assign(answer=rag_chain_from_docs)
+        # The retriever needs the 'question' string.
+        # The final chain (rag_chain_from_docs) might need 'question', 'context', and 'chat_history'.
+        chain_setup = RunnableParallel(
+            {
+                "context": itemgetter("question") | retriever,
+                "question": itemgetter("question"),
+                "chat_history": itemgetter("chat_history") # Pass chat_history through
+            }
+        )
+
+        rag_chain = chain_setup.assign(answer=rag_chain_from_docs)
         
         print("RAG chain with PydanticOutputParser created successfully.")
         return rag_chain

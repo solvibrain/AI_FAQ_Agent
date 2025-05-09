@@ -15,7 +15,7 @@ from langchain_utils import (
 )
 
 # --- Configuration ---
-FAQ_DATA_PATH = "faq_data.csv"
+FAQ_DATA_PATH = "data/faq_data.csv"
 VECTOR_STORE_PERSIST_DIR = "chroma_db_faq"
 SIMILARITY_SEARCH_K = 3 
 

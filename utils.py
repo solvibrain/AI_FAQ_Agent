@@ -10,7 +10,7 @@ from langchain_utils import (
     create_chroma_vector_store
 )
 
-FAQ_DATA_PATH = "faq_data.csv"
+FAQ_DATA_PATH = "data/faq_data.csv"
 
 # --- Component 3: Complexity Detection & Escalation Logic (LLM-driven approach) ---
 
