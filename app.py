@@ -156,4 +156,4 @@ if __name__ == "__main__":
         print("ERROR: Failed to initialize the agent at startup. Gradio app backend might be unresponsive.")
     else:
         print("INFO: Agent initialized at startup. Starting Gradio app...")
-        iface.launch()
+        iface.launch(share=True)
