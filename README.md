@@ -109,10 +109,4 @@ This project implements an AI-powered FAQ agent designed to answer user queries 
     python rag_chain_tester.py
     ```
 
-## Further Development Ideas
 
-*   **Persistent Chat History**: Implement a database to store and retrieve chat histories for returning users.
-*   **Contextual Carry-over**: Enhance the prompt or chain to better utilize conversation history for more contextually aware follow-up answers.
-*   **Advanced Query Condensation**: Implement techniques to condense conversation history and the current question into a more effective search query for the retriever.
-*   **Feedback Mechanism**: Add a way for users to rate the usefulness of answers.
-*   **Deployment**: Package and deploy the application (e.g., using Docker, cloud platforms).
